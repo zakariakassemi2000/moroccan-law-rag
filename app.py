@@ -1,32 +1,57 @@
-# app.py
 from flask import Flask, request, jsonify
 from langchain_community.vectorstores import FAISS
-from sentence_transformers import SentenceTransformer
-from transformers import pipeline
+from langchain_huggingface import HuggingFaceEmbeddings
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 
 DB_FAISS_PATH = "vectorstore/db_faiss"
 
-# Charger embeddings + vectorstore
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+# 1️⃣ Charger embeddings + vectorstore (compatible FAISS)
+embedder = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 vectorstore = FAISS.load_local(DB_FAISS_PATH, embedder, allow_dangerous_deserialization=True)
 
-# Charger un modèle de langage (Mistral)
-qa_model = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct", device=-1)
+# 2️⃣ Charger un modèle léger pour génération de texte (Flan-T5-small)
+model_name = "google/flan-t5-small"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+qa_model = pipeline("text2text-generation", model=model, tokenizer=tokenizer)
 
+# 3️⃣ Initialiser Flask
 app = Flask(__name__)
 
 @app.route("/ask", methods=["POST"])
 def ask():
+    # 4️⃣ Récupérer la question depuis le JSON
     query = request.json.get("question")
-    docs = vectorstore.similarity_search(query, k=3)  # Top 3 passages les plus proches
+    if not isinstance(query, str):
+        return {"error": "Question must be a string"}, 400
+    
+    # 5️⃣ Recherche des passages les plus proches
+    docs = vectorstore.similarity_search(query, k=3)
     context = "\n".join([d.page_content for d in docs])
 
-    prompt = f"Tu es un assistant juridique spécialisé dans le droit marocain.\n\nContexte:\n{context}\n\nQuestion: {query}\nRéponse:"
-    
-    result = qa_model(prompt, max_new_tokens=300, temperature=0.2)
+    # 6️⃣ Construire le prompt pour le modèle
+    prompt = (
+        f"Tu es un assistant juridique spécialisé dans le droit marocain.\n"
+        f"Réponds en francais de manière claire et concise.\n"
+        f"Formate les références aux articles de loi avec 'Article X'.\n\n"
+        f"Contexte :\n{context}\n\n"
+        f"Question : {query}\nRéponse :"
+    )
+
+    # 7️⃣ Génération de la réponse (réponse courte)
+    result = qa_model(prompt, max_length=150, do_sample=False)
     answer = result[0]["generated_text"]
 
-    return jsonify({"answer": answer, "sources": [d.metadata for d in docs]})
+    # 8️⃣ Retourner la réponse et les sources
+    return jsonify({
+        "answer": answer.strip(),
+        "sources": [
+            {
+                "source": d.metadata.get("source", "inconnu"),
+                "page": d.metadata.get("page_label", "?")
+            } for d in docs
+        ]
+    })
 
 if __name__ == "__main__":
     app.run(port=5000, debug=True)
