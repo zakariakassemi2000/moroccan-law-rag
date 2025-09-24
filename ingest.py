@@ -1,9 +1,9 @@
-# ingest.py
 import os
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from sentence_transformers import SentenceTransformer
+from langchain_huggingface import HuggingFaceEmbeddings
+
 
 DATA_PATH = "data/"
 DB_FAISS_PATH = "vectorstore/db_faiss"
@@ -23,15 +23,17 @@ def load_documents():
 def create_vectorstore():
     docs = load_documents()
 
-    # Découpage en chunks (500 caractères environ)
+    # Découpage en chunks
     splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     chunks = splitter.split_documents(docs)
 
-    # Embeddings avec SentenceTransformers
-    model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-    vectorstore = FAISS.from_documents(chunks, embedding=model)
+    # Embeddings HuggingFace
+    embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
+    # Vectorstore FAISS
+    vectorstore = FAISS.from_documents(chunks, embedding=embedding)
     vectorstore.save_local(DB_FAISS_PATH)
+
     print("✅ Base de données vectorielle créée !")
 
 if __name__ == "__main__":
